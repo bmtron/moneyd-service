@@ -1,46 +1,76 @@
 use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::{Client, RequestBuilder};
 use serde::Serialize;
 use serde_json;
 
-// TODO: probably rework this at some point. This is messy and contains duplicated code. Too tired rn.
-// also need to implement .env gathering
-pub async fn apiCall<T: Serialize>(
+pub struct GET;
+pub struct POST;
+pub struct PUT;
+pub struct DELETE;
+
+trait ApiRequestBuildable {
+    fn build(client: &Client, endpoint: &str) -> RequestBuilder;
+    fn has_body() -> bool;
+}
+
+impl ApiRequestBuildable for GET {
+    fn build(client: &Client, endpoint: &str) -> RequestBuilder {
+        client.get(endpoint)
+    }
+
+    fn has_body() -> bool {
+        false
+    }
+}
+
+impl ApiRequestBuildable for POST {
+    fn build(client: &Client, endpoint: &str) -> RequestBuilder {
+        client.post(endpoint)
+    }
+
+    fn has_body() -> bool {
+        true
+    }
+}
+
+impl ApiRequestBuildable for PUT {
+    fn build(client: &Client, endpoint: &str) -> RequestBuilder {
+        client.put(endpoint)
+    }
+
+    fn has_body() -> bool {
+        true
+    }
+}
+
+impl ApiRequestBuildable for DELETE {
+    fn build(client: &Client, endpoint: &str) -> RequestBuilder {
+        client.delete(endpoint)
+    }
+
+    fn has_body() -> bool {
+        false
+    }
+}
+// TODO: likely split these into RequiresBody and ForbiddenBody calls
+pub async fn apiCall<T: Serialize, K: ApiRequestBuildable>(
     endpoint: String,
     payload: T,
     auth_token: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let json_payload = serde_json::to_string(&payload)?;
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(endpoint)
+    let client = Client::new();
+    let mut builder = K::build(&client, endpoint.as_str());
+    let request_has_body = K::has_body();
+
+    builder = builder
         .headers(build_headers("GET_TOKEN_FROM_ENV"))
-        .bearer_auth(auth_token)
-        .body(json_payload)
-        .send()
-        .await?;
-    let res_bytes = resp.bytes().await?.to_vec();
+        .bearer_auth(auth_token);
+    if request_has_body {
+        builder = builder.json(&payload);
+    }
+    let resp_bytes = builder.send().await?.bytes().await?.to_vec();
 
-    let e = String::from_utf8(res_bytes)?;
-    Ok(e)
-}
-
-pub async fn apiBatchCall<T: Serialize>(
-    endpoint: String,
-    payload: Vec<T>,
-    auth_token: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let json_payload = serde_json::to_string(&payload)?;
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(endpoint)
-        .headers(build_headers("GET_TOKEN_FROM_ENV"))
-        .bearer_auth(auth_token)
-        .body(json_payload)
-        .send()
-        .await?;
-    let res_bytes = resp.bytes().await?.to_vec();
-
-    let e = String::from_utf8(res_bytes)?;
+    let e = String::from_utf8(resp_bytes)?;
     Ok(e)
 }
 
