@@ -1,25 +1,27 @@
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, RequestBuilder};
 use serde::Serialize;
-use serde_json;
 
 pub struct GET;
 pub struct POST;
 pub struct PUT;
 pub struct DELETE;
 
-trait ApiRequestBuildable {
+pub trait ApiRequestBuildable {
     fn build(client: &Client, endpoint: &str) -> RequestBuilder;
-    fn has_body() -> bool;
 }
+
+pub trait RequiresBody {}
+pub trait ForbiddenBody {}
+
+impl RequiresBody for POST {}
+impl RequiresBody for PUT {}
+impl ForbiddenBody for GET {}
+impl ForbiddenBody for DELETE {}
 
 impl ApiRequestBuildable for GET {
     fn build(client: &Client, endpoint: &str) -> RequestBuilder {
         client.get(endpoint)
-    }
-
-    fn has_body() -> bool {
-        false
     }
 }
 
@@ -27,19 +29,11 @@ impl ApiRequestBuildable for POST {
     fn build(client: &Client, endpoint: &str) -> RequestBuilder {
         client.post(endpoint)
     }
-
-    fn has_body() -> bool {
-        true
-    }
 }
 
 impl ApiRequestBuildable for PUT {
     fn build(client: &Client, endpoint: &str) -> RequestBuilder {
         client.put(endpoint)
-    }
-
-    fn has_body() -> bool {
-        true
     }
 }
 
@@ -47,36 +41,45 @@ impl ApiRequestBuildable for DELETE {
     fn build(client: &Client, endpoint: &str) -> RequestBuilder {
         client.delete(endpoint)
     }
-
-    fn has_body() -> bool {
-        false
-    }
 }
-// TODO: likely split these into RequiresBody and ForbiddenBody calls
-pub async fn apiCall<T: Serialize, K: ApiRequestBuildable>(
+
+pub async fn api_call_no_body<T: Serialize, K: ApiRequestBuildable + ForbiddenBody>(
     endpoint: String,
-    payload: T,
-    auth_token: &str,
+    auth_token: &String,
+    api_key: &String,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let client = Client::new();
     let mut builder = K::build(&client, endpoint.as_str());
-    let request_has_body = K::has_body();
-
     builder = builder
-        .headers(build_headers("GET_TOKEN_FROM_ENV"))
+        .headers(build_headers(api_key.as_str()))
         .bearer_auth(auth_token);
-    if request_has_body {
-        builder = builder.json(&payload);
-    }
     let resp_bytes = builder.send().await?.bytes().await?.to_vec();
-
-    let e = String::from_utf8(resp_bytes)?;
-    Ok(e)
+    let result = String::from_utf8(resp_bytes)?;
+    Ok(result)
 }
 
-fn build_headers(api_token: &'static str) -> HeaderMap {
+pub async fn api_call_requires_body<T: Serialize, K: ApiRequestBuildable + RequiresBody>(
+    endpoint: String,
+    payload: T,
+    auth_token: &String,
+    api_key: &String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let mut builder = K::build(&client, endpoint.as_str());
+
+    builder = builder
+        .headers(build_headers(&api_key))
+        .bearer_auth(auth_token)
+        .json(&payload);
+
+    let resp_bytes = builder.send().await?.bytes().await?.to_vec();
+    let result = String::from_utf8(resp_bytes)?;
+    Ok(result)
+}
+
+fn build_headers(api_key: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    let api_token: HeaderValue = HeaderValue::from_static(api_token);
+    let api_token: HeaderValue = HeaderValue::from_str(api_key).expect("Invalid header value.");
 
     headers.append("X-API-Key", api_token);
 
