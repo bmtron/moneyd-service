@@ -1,0 +1,6 @@
+[folders]
+amex = "/path/.moneyd/amex"
+citizens = "/path/.moneyd/citizens"
+apple = "/path/.moneyd/apple"
+chase = "/path/.moneyd/chase"
+

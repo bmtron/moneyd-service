@@ -4,3 +4,5 @@
 finance_ingestion_plan.md
 .env
 .continue
+config/consumed-files.json
+config/moneyd-config.toml

@@ -61,16 +61,18 @@ pub async fn api_call_no_body<T: Serialize, K: ApiRequestBuildable + ForbiddenBo
 pub async fn api_call_requires_body<T: Serialize, K: ApiRequestBuildable + RequiresBody>(
     endpoint: String,
     payload: T,
-    auth_token: &String,
+    auth_token: Option<String>,
     api_key: &String,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let client = Client::new();
     let mut builder = K::build(&client, endpoint.as_str());
 
-    builder = builder
-        .headers(build_headers(&api_key))
-        .bearer_auth(auth_token)
-        .json(&payload);
+    builder = builder.headers(build_headers(&api_key));
+    // login endpoint does not require auth token (duh)
+    if let Some(auth_token_exists) = auth_token {
+        builder = builder.bearer_auth(auth_token_exists);
+    }
+    builder = builder.json(&payload);
 
     let resp_bytes = builder.send().await?.bytes().await?.to_vec();
     let result = String::from_utf8(resp_bytes)?;

@@ -20,9 +20,12 @@ pub async fn create_statement(
     // should load base url from .env
     // check errors here, panicking on 404 TODO
     let endpoint = String::from("http://localhost:8085/api/statements");
-
+    let some_auth_token: Option<String> = Some(auth_token.clone());
     let api_result = api_call_requires_body::<StatementTransport, POST>(
-        endpoint, statement, auth_token, api_key,
+        endpoint,
+        statement,
+        some_auth_token,
+        api_key,
     )
     .await?;
 
