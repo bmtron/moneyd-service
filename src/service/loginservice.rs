@@ -9,8 +9,6 @@ pub async fn login(login: LoginRequest, api_key: &String) -> LoginResponse {
         .await
         .unwrap();
 
-    println!("response: {}", resp);
-
     let result: LoginResponse = serde_json::from_str(&resp).unwrap();
 
     result

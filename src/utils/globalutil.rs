@@ -1,9 +1,14 @@
 use std::env;
+use std::fs::{File, canonicalize};
+use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::str::FromStr;
 
 use crate::Env;
+use crate::ingestion::{FileHashData, IngestionResult};
 use crate::service::statementservice::create_statement;
-use crate::utils::transactiontransporter::TransactionResponse;
+use crate::utils::logintransporter::LoginResponse;
+use crate::utils::statementtransporter::StatementTransport;
 use crate::{
     service::transactionservice::create_transactions,
     utils::transactiontransporter::TransactionTransport,
@@ -77,7 +82,6 @@ impl ConvertToTransaction for CitizensData {
             sliced_amount = sliced_amount.replace("-", "");
         }
 
-        println!("{}", sliced_amount);
         let amount_as_decimal = Decimal::from_str(&sliced_amount.as_str()).unwrap();
         let mut amount_as_i32 = amount_as_decimal
             .checked_mul(rust_decimal::Decimal::from(100))
@@ -120,40 +124,9 @@ fn parse_and_format_date(date_str: &str) -> Result<String, Box<dyn std::error::E
     // If parsing fails, return original string
     Ok(date_str.to_string())
 }
-pub struct StmntTxnData {
-    pub user_id: i32,
-    pub institution_id: i32,
-}
-
 pub struct AuthorizationData {
     pub auth_token: String,
     pub api_key: String,
-}
-
-pub async fn add_statement_and_transaction_data(
-    stmn_txn_data: StmntTxnData,
-    auth_data: AuthorizationData,
-    txn_batch: Vec<TransactionTransport>,
-) -> Result<Vec<TransactionResponse>, Box<dyn std::error::Error>> {
-    let statement = create_statement(
-        stmn_txn_data.user_id,
-        stmn_txn_data.institution_id,
-        &auth_data.auth_token,
-        &auth_data.api_key,
-    )
-    .await
-    .unwrap();
-
-    let txns = create_transactions(
-        txn_batch,
-        statement.statement_id,
-        &auth_data.auth_token,
-        &auth_data.api_key,
-    )
-    .await
-    .unwrap();
-
-    Ok(txns)
 }
 
 pub fn get_env_vars() -> Env {
@@ -168,4 +141,60 @@ pub fn get_env_vars() -> Env {
     }
     let envs: Env = Env { api_key, base_url };
     envs
+}
+
+pub async fn post_statements_and_transactions(
+    ingest_data: IngestionResult,
+    login_data: LoginResponse,
+    auth_data: AuthorizationData,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for c in ingest_data.citizens_ingestion {
+        // hardcoding institution id's for now and statment period data, TODO
+        let citizens_statement_data: StatementTransport = StatementTransport {
+            banking_user_id: login_data.user.id,
+            institution_id: 2, // cb
+            period_start: parse_and_format_date("2025-11-01").unwrap(),
+            period_end: parse_and_format_date("2025-11-17").unwrap(),
+        };
+        let stmt = create_statement(citizens_statement_data, &auth_data)
+            .await
+            .unwrap();
+
+        // not using the response for anything here, consider doing...something...TODO
+        let txn_batch_result = create_transactions(c, stmt.statement_id, &auth_data)
+            .await
+            .unwrap();
+    }
+
+    for a in ingest_data.amex_ingestion {
+        // hardcoding institution id's for now and statment period data, TODO
+        let amex_statement_data: StatementTransport = StatementTransport {
+            banking_user_id: login_data.user.id,
+            institution_id: 1, // amex
+            period_start: parse_and_format_date("2025-11-01").unwrap(),
+            period_end: parse_and_format_date("2025-11-17").unwrap(),
+        };
+        let stmt = create_statement(amex_statement_data, &auth_data)
+            .await
+            .unwrap();
+
+        // not using the response for anything here, consider doing...something...TODO
+        let txn_batch_result = create_transactions(a, stmt.statement_id, &auth_data)
+            .await
+            .unwrap();
+    }
+
+    Ok(())
+}
+
+pub fn update_hashes(hash_data: Vec<FileHashData>) -> Result<(), Box<dyn std::error::Error>> {
+    let file_hash_str = serde_json::to_string(&hash_data).unwrap();
+    let hash_json_path = Path::new("./config/consumed-files.json");
+    let absolute_hash_path = canonicalize(hash_json_path)?;
+
+    let file = File::create(absolute_hash_path).unwrap();
+    let mut writer = BufWriter::new(file);
+    writer.write_all(&file_hash_str.as_bytes())?;
+    writer.flush()?;
+    Ok(())
 }

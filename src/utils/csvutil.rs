@@ -1,6 +1,4 @@
 use csv;
-use serde::Deserialize;
-use std::{fs::File, io::Read};
 
 use crate::utils::{
     globalutil::{AmexData, CitizensData, ConvertToTransaction},

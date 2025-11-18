@@ -1,24 +1,17 @@
 use crate::{
-    service::{
-        api::{POST, api_call_requires_body},
-        loginservice::login,
-    },
+    service::loginservice::login,
     ui::loginwindow::build_login_window,
     utils::{
-        csvutil,
-        globalutil::{self, AuthorizationData, StmntTxnData, get_env_vars},
+        globalutil::{
+            self, AuthorizationData, get_env_vars, post_statements_and_transactions, update_hashes,
+        },
         logintransporter::LoginRequest,
-        statementtransporter::StatementTransport,
     },
 };
-use clap;
-use cursive::{
-    CursiveRunnable,
-    reexports::log,
-    views::{Dialog, TextView},
-};
+
+use cursive::CursiveRunnable;
 use dotenv::dotenv;
-use std::env;
+
 mod ingestion;
 mod service;
 mod ui;
@@ -39,44 +32,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     siv.run();
     let login_request = get_user_data_from_cursive(&mut siv);
 
+    let api_key = &env_vars.api_key.expect("API_KEY not set. Panicking.");
     let mut auth_token: String = String::new();
-    let login_res = login(
-        login_request,
-        &env_vars.api_key.expect("API_KEY not set. Panicking."),
-    )
-    .await;
-    auth_token = login_res.token;
+    let login_res = login(login_request, api_key).await;
 
-    // login handled, begin ingestion
-
-    let res = ingestion::ingestinator()?;
-    println!("{}", auth_token);
-    Ok(())
-}
-
-async fn temp_ingest_and_send(
-    auth_token: String,
-    api_key: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let ingestion_result = csvutil::ingest_amex(String::from("./examples/october2025_amex.csv"))?;
-    println!("{:?}", &ingestion_result);
-
-    // temp, hardcoded for now TODO
-    let std: StmntTxnData = StmntTxnData {
-        user_id: 1,
-        institution_id: 1,
-    };
+    auth_token = login_res.token.clone();
     let auth_data: AuthorizationData = AuthorizationData {
         auth_token: auth_token,
-        api_key: api_key,
+        api_key: api_key.clone(),
     };
-    let txn_result =
-        globalutil::add_statement_and_transaction_data(std, auth_data, ingestion_result)
-            .await
-            .unwrap();
 
-    println!("{:?}", txn_result);
+    // login handled, begin ingestion
+    let ingestion_res = ingestion::ingestinator()?;
 
+    post_statements_and_transactions(ingestion_res.ingestion_result, login_res, auth_data)
+        .await
+        .unwrap();
+
+    update_hashes(ingestion_res.file_hash_data).unwrap();
+
+    println!("Execution successful. Data uploaded.");
     Ok(())
 }
 
