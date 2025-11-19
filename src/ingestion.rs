@@ -103,12 +103,10 @@ fn get_hash_list()
     let mut hash_contents = String::new();
     hash_json.read_to_string(&mut hash_contents)?;
 
-    println!("gathering hashes...");
     let file_hashes: Vec<FileHashData> = serde_json::from_str(&hash_contents)?;
 
     let mut file_hashes_map: HashMap<String, String> = HashMap::new();
 
-    println!("gathered hashes...");
     for hash in &file_hashes {
         file_hashes_map.insert(hash.hash.clone(), hash.path.clone());
     }

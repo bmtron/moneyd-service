@@ -14,10 +14,15 @@ pub fn ingest_amex(
 ) -> Result<Vec<TransactionTransport>, Box<dyn std::error::Error>> {
     let mut rdr = csv::Reader::from_path(file_path)?;
     let mut amex_records: Vec<TransactionTransport> = Vec::new();
-    for result in rdr.deserialize() {
-        let record: AmexData = result?;
-        let txn = record.to_txn();
-        amex_records.push(txn);
+    let mut count = 0;
+    for result in rdr.records() {
+        let str_rec = result;
+        if count > 0 {
+            let record: AmexData = str_rec.unwrap().deserialize(None).unwrap();
+            let txn = record.to_txn();
+            amex_records.push(txn);
+        }
+        count += 1;
     }
     Ok(amex_records)
 }
