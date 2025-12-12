@@ -145,8 +145,8 @@ pub fn get_env_vars() -> Env {
 
 pub async fn post_statements_and_transactions(
     ingest_data: IngestionResult,
-    login_data: LoginResponse,
-    auth_data: AuthorizationData,
+    login_data: &LoginResponse,
+    auth_data: &AuthorizationData,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for c in ingest_data.citizens_ingestion {
         // hardcoding institution id's for now and statment period data, TODO

@@ -1,17 +1,17 @@
 use crate::{
-    service::loginservice::login,
-    ui::loginwindow::build_login_window,
-    utils::{
+    analyzer::analyze::analyze_data, service::loginservice::login, ui::loginwindow::build_login_window, utils::{
         globalutil::{
             self, AuthorizationData, get_env_vars, post_statements_and_transactions, update_hashes,
         },
         logintransporter::LoginRequest,
-    },
+    }
 };
 
+use clap::Parser;
 use cursive::CursiveRunnable;
 use dotenv::dotenv;
 
+mod analyzer;
 mod ingestion;
 mod service;
 mod ui;
@@ -22,8 +22,18 @@ struct Env {
     base_url: Option<String>,
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short = 'i', long = "ingest")]
+    ingest: bool,
+    #[arg(short = 'a', long = "analyze")]
+    analyze: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
     dotenv().ok();
 
     let env_vars = get_env_vars();
@@ -41,17 +51,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_token: auth_token,
         api_key: api_key.clone(),
     };
+    println!("captured login info...");
 
-    // login handled, begin ingestion
-    let ingestion_res = ingestion::ingestinator()?;
+    if args.ingest {
+        // login handled, begin ingestion
+        let ingestion_res = ingestion::ingestinator()?;
 
-    post_statements_and_transactions(ingestion_res.ingestion_result, login_res, auth_data)
-        .await
-        .unwrap();
+        post_statements_and_transactions(ingestion_res.ingestion_result, &login_res, &auth_data)
+            .await
+            .unwrap();
 
-    update_hashes(ingestion_res.file_hash_data).unwrap();
+        update_hashes(ingestion_res.file_hash_data).unwrap();
 
-    println!("Execution successful. Data uploaded.");
+        println!("Execution successful. Data uploaded.");
+    }
+    if args.analyze {
+        analyze_data(&auth_data, &1, &login_res.user.id).await;
+    }
     Ok(())
 }
 

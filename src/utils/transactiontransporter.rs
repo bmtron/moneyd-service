@@ -9,7 +9,7 @@ pub struct TransactionTransport {
     pub amount: i32,
     pub transaction_date: String,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionResponse {
     pub transaction_id: i32,
     pub statement_id: i32,
