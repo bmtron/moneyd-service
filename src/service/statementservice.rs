@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub async fn create_statement(
-    statement_xport: StatementTransport,
+    statement_xport: &StatementTransport,
     auth_data: &AuthorizationData,
 ) -> Result<StatementResponse, Box<dyn std::error::Error>> {
     // should load base url from .env

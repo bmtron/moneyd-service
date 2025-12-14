@@ -60,7 +60,7 @@ pub async fn api_call_no_body<T: Serialize, K: ApiRequestBuildable + ForbiddenBo
 
 pub async fn api_call_requires_body<T: Serialize, K: ApiRequestBuildable + RequiresBody>(
     endpoint: String,
-    payload: T,
+    payload: &T,
     auth_token: Option<String>,
     api_key: &String,
 ) -> Result<String, Box<dyn std::error::Error>> {

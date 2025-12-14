@@ -1,10 +1,11 @@
 use crate::{
-    analyzer::analyze::analyze_data, service::loginservice::login, ui::loginwindow::build_login_window, utils::{
-        globalutil::{
-            self, AuthorizationData, get_env_vars, post_statements_and_transactions, update_hashes,
-        },
+    analyzer::analyze::analyze_data,
+    service::loginservice::login,
+    ui::loginwindow::build_login_window,
+    utils::{
+        globalutil::{AuthorizationData, get_env_vars, post_statements_and_transactions},
         logintransporter::LoginRequest,
-    }
+    },
 };
 
 use clap::Parser;
@@ -13,6 +14,7 @@ use dotenv::dotenv;
 
 mod analyzer;
 mod ingestion;
+mod quickbooks;
 mod service;
 mod ui;
 mod utils;
@@ -29,13 +31,20 @@ struct Args {
     ingest: bool,
     #[arg(short = 'a', long = "analyze")]
     analyze: bool,
+    #[arg(short = 't', long = "test")]
+    test: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     dotenv().ok();
-
+    // if args.test {
+    //     println!("Test is true!");
+    //     //parse_test();
+    //     parse();
+    //     return Ok(());
+    // }
     let env_vars = get_env_vars();
 
     let mut siv = build_login_window();
@@ -57,11 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // login handled, begin ingestion
         let ingestion_res = ingestion::ingestinator()?;
 
-        post_statements_and_transactions(ingestion_res.ingestion_result, &login_res, &auth_data)
+        post_statements_and_transactions(ingestion_res, &login_res, &auth_data)
             .await
             .unwrap();
-
-        update_hashes(ingestion_res.file_hash_data).unwrap();
 
         println!("Execution successful. Data uploaded.");
     }

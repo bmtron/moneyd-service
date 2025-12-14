@@ -1,6 +1,15 @@
-[folders]
-amex = "/path/.moneyd/amex"
-citizens = "/path/.moneyd/citizens"
-apple = "/path/.moneyd/apple"
-chase = "/path/.moneyd/chase"
+[[directory]]
+name = "apple"
+path = "/path/.moneyd/apple"
 
+[[directory]]
+name = "amex"
+path = "/home/bmtron/.moneyd/amex"
+
+[[directory]]
+name = "citizens"
+path = "/home/bmtron/.moneyd/citizens"
+
+[[directory]]
+name = "chase"
+path = "/path/.moneyd/chase"
