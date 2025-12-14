@@ -6,3 +6,4 @@ finance_ingestion_plan.md
 .continue
 config/consumed-files.json
 config/moneyd-config.toml
+config/existing-hashes.txt

@@ -1,11 +1,5 @@
-use std::env;
-use std::fs::{File, canonicalize};
-use std::io::{BufWriter, Write};
-use std::path::Path;
-use std::str::FromStr;
-
 use crate::Env;
-use crate::ingestion::{FileHashData, IngestionResult};
+use crate::ingestion::{IngestionResult, TransactionBatchHolder};
 use crate::service::statementservice::create_statement;
 use crate::utils::logintransporter::LoginResponse;
 use crate::utils::statementtransporter::StatementTransport;
@@ -13,96 +7,36 @@ use crate::{
     service::transactionservice::create_transactions,
     utils::transactiontransporter::TransactionTransport,
 };
-
 use chrono::{DateTime, TimeZone, Utc};
-use rust_decimal::prelude::ToPrimitive;
-use rust_decimal::{self, Decimal};
-use serde::{Deserialize, Serialize};
-pub enum FinancialEstablishment {
-    Amex,
-    Citizens,
-    CapitalOne,
-}
-pub trait ConvertToTransaction {
-    fn to_txn(&self) -> TransactionTransport;
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AmexData {
-    pub date: String,
-    pub description: String,
-    pub amount: Decimal,
-}
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::{env, fs};
 
-impl ConvertToTransaction for AmexData {
-    fn to_txn(&self) -> TransactionTransport {
-        let formatted_date = match parse_and_format_date(&self.date) {
-            Ok(date_str) => date_str,
-            Err(_) => self.date.clone(), // Fallback to original if parsing fails
-        };
+const HASH_PATH: &str = "./config/existing-hashes.txt";
 
-        let amount_as_i32 = self
-            .amount
-            .checked_mul(rust_decimal::Decimal::from(100))
-            .and_then(|dec| dec.to_i32())
-            .unwrap_or(0);
-
-        let txntp = TransactionTransport {
-            statement_id: 0,
-            description: self.description.clone(),
-            amount: amount_as_i32,
-            transaction_date: formatted_date,
-        };
-
-        txntp
+pub fn parse_ofx_date(date_str: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if let Ok(dt) = chrono::NaiveDate::parse_from_str(date_str, "%Y%m%d%H%M%S") {
+        let dt_utc = Utc.from_utc_datetime(&dt.and_hms_opt(0, 0, 0).unwrap());
+        return Ok(dt_utc.to_rfc3339());
     }
-}
-#[derive(Debug, Deserialize)]
-pub struct CitizensData {
-    transaction_type: String,
-    date: String,
-    account_type: String,
-    description: String,
-    amount: String,
-    reference_no: String,
-    debits: String,
-    credits: String,
-}
 
-impl ConvertToTransaction for CitizensData {
-    fn to_txn(&self) -> TransactionTransport {
-        let formatted_date = match parse_and_format_date(&self.date) {
-            Ok(date_str) => date_str,
-            Err(_) => self.date.clone(), // Fallback to original if parsing fails
-        };
+    // amex adds weird timezone nonsense to the end
+    // if the first parse failed then we know this should work
+    let end = date_str
+        .find('.')
+        .or_else(|| date_str.find('['))
+        .unwrap_or(date_str.len());
+    let dt_str = &date_str[..end]; // "20251211000000"
 
-        let mut is_negative = false;
-        let mut sliced_amount = String::from(self.amount.as_str());
-        if self.amount.contains("-") {
-            is_negative = true;
-            sliced_amount = sliced_amount.replace("-", "");
-        }
-
-        let amount_as_decimal = Decimal::from_str(&sliced_amount.as_str()).unwrap();
-        let mut amount_as_i32 = amount_as_decimal
-            .checked_mul(rust_decimal::Decimal::from(100))
-            .and_then(|dec| dec.to_i32())
-            .unwrap_or(0);
-
-        if is_negative {
-            amount_as_i32 = amount_as_i32 * -1;
-        }
-
-        let txntp = TransactionTransport {
-            statement_id: 0,
-            description: self.description.clone(),
-            amount: amount_as_i32,
-            transaction_date: formatted_date,
-        };
-
-        txntp
+    if let Ok(dt) = chrono::NaiveDate::parse_from_str(dt_str, "%Y%m%d%H%M%S") {
+        let dt_utc = Utc.from_utc_datetime(&dt.and_hms_opt(0, 0, 0).unwrap());
+        return Ok(dt_utc.to_rfc3339());
     }
+
+    // If parsing fails, return original string
+    Ok(date_str.to_string())
 }
-fn parse_and_format_date(date_str: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn parse_and_format_date(date_str: &str) -> Result<String, Box<dyn std::error::Error>> {
     // Try to parse as ISO 8601 format
     if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
         return Ok(dt.to_rfc3339());
@@ -117,6 +51,11 @@ fn parse_and_format_date(date_str: &str) -> Result<String, Box<dyn std::error::E
 
     // Try to parse as MM/dd/yyyy format
     if let Ok(dt) = chrono::NaiveDate::parse_from_str(date_str, "%m/%d/%Y") {
+        let dt_utc = Utc.from_utc_datetime(&dt.and_hms_opt(0, 0, 0).unwrap());
+        return Ok(dt_utc.to_rfc3339());
+    }
+
+    if let Ok(dt) = chrono::NaiveDate::parse_from_str(date_str, "%Y%m%d%H%M%S") {
         let dt_utc = Utc.from_utc_datetime(&dt.and_hms_opt(0, 0, 0).unwrap());
         return Ok(dt_utc.to_rfc3339());
     }
@@ -142,59 +81,133 @@ pub fn get_env_vars() -> Env {
     let envs: Env = Env { api_key, base_url };
     envs
 }
-
 pub async fn post_statements_and_transactions(
-    ingest_data: IngestionResult,
-    login_data: LoginResponse,
-    auth_data: AuthorizationData,
+    mut transaction_batch_data: Vec<TransactionBatchHolder>,
+    login_data: &LoginResponse,
+    auth_data: &AuthorizationData,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for c in ingest_data.citizens_ingestion {
-        // hardcoding institution id's for now and statment period data, TODO
-        let citizens_statement_data: StatementTransport = StatementTransport {
+    for institution_batch_holder in transaction_batch_data.iter_mut() {
+        let statement_data: StatementTransport = StatementTransport {
             banking_user_id: login_data.user.id,
-            institution_id: 2, // cb
+            institution_id: institution_batch_holder.institution_id,
+            // TODO: gotta figure out these date formats from the new file
+            // deal with it later. can't be too hard...
             period_start: parse_and_format_date("2025-11-01").unwrap(),
             period_end: parse_and_format_date("2025-11-17").unwrap(),
         };
-        let stmt = create_statement(citizens_statement_data, &auth_data)
-            .await
-            .unwrap();
 
-        // not using the response for anything here, consider doing...something...TODO
-        let txn_batch_result = create_transactions(c, stmt.statement_id, &auth_data)
-            .await
-            .unwrap();
+        for batch in institution_batch_holder.transaction_batches.iter_mut() {
+            let stmt = create_statement(&statement_data, &auth_data).await.unwrap();
+            for t in batch.transactions.iter_mut() {
+                t.statement_id = Some(stmt.statement_id);
+            }
+            let txn_batch_result =
+                create_transactions(&batch.transactions, stmt.statement_id, &auth_data).await;
+            match txn_batch_result {
+                Ok(_) => {
+                    add_multiple_hashes(HASH_PATH, &batch.hashes);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+// "./config/existing-hashes.txt"
+pub fn hash_transaction_data(txn: &TransactionTransport) -> String {
+    let mut hasher = Sha256::new();
+
+    // Add each string property
+    hasher.update(txn.description.as_bytes());
+    hasher.update(txn.transaction_date.as_bytes());
+    // Add more string fields as needed
+
+    // Optionally, add integer fields as bytes
+    hasher.update(&txn.amount.to_le_bytes());
+    hasher.update(&txn.refnum.as_bytes());
+
+    // Finalize and format as hex
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+pub fn get_transaction_hashes(path: &str) -> Result<HashSet<String>, Box<dyn std::error::Error>> {
+    let hashes: HashSet<String> = fs::read_to_string(path)?
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    Ok(hashes)
+}
+pub fn add_multiple_hashes(
+    path: &str,
+    new_hashes: &HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut existing_hashes = get_transaction_hashes(path).unwrap();
+
+    for hash in new_hashes.iter() {
+        if !existing_hashes.contains(hash) {
+            existing_hashes.insert(hash.to_string());
+        }
     }
 
-    for a in ingest_data.amex_ingestion {
-        // hardcoding institution id's for now and statment period data, TODO
-        let amex_statement_data: StatementTransport = StatementTransport {
-            banking_user_id: login_data.user.id,
-            institution_id: 1, // amex
-            period_start: parse_and_format_date("2025-11-01").unwrap(),
-            period_end: parse_and_format_date("2025-11-17").unwrap(),
-        };
-        let stmt = create_statement(amex_statement_data, &auth_data)
-            .await
-            .unwrap();
-
-        // not using the response for anything here, consider doing...something...TODO
-        let txn_batch_result = create_transactions(a, stmt.statement_id, &auth_data)
-            .await
-            .unwrap();
+    let hash_string = existing_hashes
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(path, hash_string)?;
+    Ok(())
+}
+pub fn add_hash(path: &str, new_hash: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut hashes = get_transaction_hashes(path).unwrap();
+    if !hashes.contains(new_hash) {
+        hashes.insert(new_hash.to_string());
+        let hash_string = hashes
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(path, hash_string)?;
     }
 
     Ok(())
 }
 
-pub fn update_hashes(hash_data: Vec<FileHashData>) -> Result<(), Box<dyn std::error::Error>> {
-    let file_hash_str = serde_json::to_string(&hash_data).unwrap();
-    let hash_json_path = Path::new("./config/consumed-files.json");
-    let absolute_hash_path = canonicalize(hash_json_path)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const HASH_PATH: &str = "./config/existing-hashes-test.txt";
+    const HASH_TEMPLATE_PATH: &str = "./config/existing-hashes-test-template.txt";
+    const NEW_HASH: &str = "HASHTESTDATANEW1";
+    #[test]
+    fn test_get_hashes_works() {
+        let hashes = get_transaction_hashes(HASH_PATH);
+        let res = match hashes {
+            Ok(h) => h,
+            _ => HashSet::new(),
+        };
+        assert!(res.len() > 0);
+        assert!(res.get("TESTHASHDATA1").is_some());
+    }
 
-    let file = File::create(absolute_hash_path).unwrap();
-    let mut writer = BufWriter::new(file);
-    writer.write_all(&file_hash_str.as_bytes())?;
-    writer.flush()?;
-    Ok(())
+    #[test]
+    fn test_add_hashes_works() {
+        let _ = add_hash(HASH_PATH, NEW_HASH);
+        let hashes = match get_transaction_hashes(HASH_PATH) {
+            Ok(h) => h,
+            _ => HashSet::new(),
+        };
+
+        assert!(hashes.len() > 0);
+        assert_eq!(hashes.len(), 3);
+        assert!(hashes.get(NEW_HASH).is_some());
+        clean_test_file(HASH_PATH);
+    }
+
+    fn clean_test_file(path: &str) {
+        let template_data = fs::read_to_string(HASH_TEMPLATE_PATH).unwrap();
+        let _ = fs::write(path, template_data);
+    }
 }
