@@ -43,7 +43,6 @@ impl TempTranFromXml {
         };
 
         let date = parse_ofx_date(self.date_posted.as_str()).unwrap();
-        println!("Heres the parsed date probably: {}", &date);
 
         TransactionTransport {
             statement_id: None,

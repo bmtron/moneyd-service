@@ -33,6 +33,7 @@ pub struct TransactionBatchHolder {
 pub struct TransactionBatch {
     pub transactions: Vec<TransactionTransport>,
     pub hashes: HashSet<String>,
+    pub all_transactions_exist: bool,
 }
 
 impl TransactionBatch {
@@ -40,13 +41,9 @@ impl TransactionBatch {
         TransactionBatch {
             transactions: Vec::new(),
             hashes: HashSet::new(),
+            all_transactions_exist: false,
         }
     }
-}
-
-pub struct IngestionResult {
-    batches: TransactionBatchHolder,
-    existing_hashes: HashSet<String>,
 }
 
 const HASH_PATH: &str = "./config/existing-hashes.txt";
@@ -122,6 +119,9 @@ fn process_directory(
             }
         }
 
+        if new_hashes.len() == 0 {
+            batch.all_transactions_exist = true;
+        }
         batch.transactions = txn_transports;
         batch.hashes = new_hashes;
         batches.push(batch);

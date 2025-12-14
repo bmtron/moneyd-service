@@ -1,5 +1,5 @@
 use crate::Env;
-use crate::ingestion::{IngestionResult, TransactionBatchHolder};
+use crate::ingestion::TransactionBatchHolder;
 use crate::service::statementservice::create_statement;
 use crate::utils::logintransporter::LoginResponse;
 use crate::utils::statementtransporter::StatementTransport;
@@ -97,17 +97,19 @@ pub async fn post_statements_and_transactions(
         };
 
         for batch in institution_batch_holder.transaction_batches.iter_mut() {
-            let stmt = create_statement(&statement_data, &auth_data).await.unwrap();
-            for t in batch.transactions.iter_mut() {
-                t.statement_id = Some(stmt.statement_id);
-            }
-            let txn_batch_result =
-                create_transactions(&batch.transactions, stmt.statement_id, &auth_data).await;
-            match txn_batch_result {
-                Ok(_) => {
-                    add_multiple_hashes(HASH_PATH, &batch.hashes);
+            if !batch.all_transactions_exist {
+                let stmt = create_statement(&statement_data, &auth_data).await.unwrap();
+                for t in batch.transactions.iter_mut() {
+                    t.statement_id = Some(stmt.statement_id);
                 }
-                _ => {}
+                let txn_batch_result =
+                    create_transactions(&batch.transactions, stmt.statement_id, &auth_data).await;
+                match txn_batch_result {
+                    Ok(_) => {
+                        add_multiple_hashes(HASH_PATH, &batch.hashes);
+                    }
+                    _ => {}
+                }
             }
         }
     }
