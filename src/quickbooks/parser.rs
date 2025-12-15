@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 
-use crate::utils::globalutil::{parse_and_format_date, parse_ofx_date};
+use crate::utils::globalutil::parse_ofx_date;
 use crate::utils::transactiontransporter::TransactionTransport;
 
 const CREDIT_TYPE_CODE: i32 = 20;
@@ -59,7 +59,7 @@ impl TempTranFromXml {
     }
 }
 
-pub fn parse_ofx_with_fallback(file_content: &str) -> Vec<TempTranFromXml> {
+pub fn parse_ofx_with_fallback(file_content: &str, file_name: &str) -> Vec<TempTranFromXml> {
     match parse_as_xml(&file_content.to_string()) {
         Ok(txns) if !txns.is_empty() => {
             println!("Parsed as OFX v2");
@@ -76,7 +76,15 @@ pub fn parse_ofx_with_fallback(file_content: &str) -> Vec<TempTranFromXml> {
         _ => {}
     }
 
-    panic!("Could not parse file as either OFX v1 or v2");
+    match parse_as_sgml_on_one_line(&file_content.to_string()) {
+        Ok(txns) if !txns.is_empty() => {
+            println!("Parsed as OFX v1 that was all on one line");
+            return txns;
+        }
+        _ => {}
+    }
+
+    panic!("Could not parse file {} as either OFX v1 or v2", file_name);
 }
 
 pub fn parse_as_xml(
@@ -171,6 +179,12 @@ pub fn parse_as_xml(
     Ok(txns)
 }
 
+pub fn parse_as_sgml_on_one_line(
+    mut file_content: &String,
+) -> Result<Vec<TempTranFromXml>, Box<dyn std::error::Error>> {
+    let replaced_file_content = &file_content.replace("<", "\n<");
+    parse_as_sgml(&replaced_file_content)
+}
 pub fn parse_as_sgml(
     file_content: &String,
 ) -> Result<Vec<TempTranFromXml>, Box<dyn std::error::Error>> {
@@ -181,6 +195,7 @@ pub fn parse_as_sgml(
 
     for line in reader.lines() {
         let line = line.unwrap().trim().to_string();
+        println!("line: {}", line);
         if line.is_empty() {
             continue;
         }
@@ -347,6 +362,19 @@ NEWFILEUID:NONE
         </CCSTMTTRNRS>
     </CREDITCARDMSGSRSV1>
 </OFX>"#;
+
+    const ONE_LINE_TEST_DATA: &str = r#"OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+SECURITY:NONE
+ENCODING:USASCII
+CHARSET:1252
+COMPRESSION:NONE
+OLDFILEUID:NONE
+NEWFILEUID:NONE
+
+<OFX><SIGNONMSGSRSV1><SONRS><STATUS><CODE>0<SEVERITY>INFO</STATUS><DTSERVER>20251215120000[0:GMT]<LANGUAGE>ENG<FI><ORG>Dummy<FID>000</FI></SONRS></SIGNONMSGSRSV1><CREDITCARDMSGSRSV1><CCSTMTTRNRS><TRNUID>0<STATUS><CODE>0<SEVERITY>INFO</STATUS><CCSTMTRS><CURDEF>USD<CCACCTFROM><ACCTID>00-test</CCACCTFROM><BANKTRANLIST><DTSTART>20251101120000[0:GMT]<DTEND>20251130120000[0:GMT]<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20251129120000[0:GMT]<TRNAMT>-0.92<FITID>test-123<NAME>Test Transaction</STMTTRN></BANKTRANLIST><LEDGERBAL><BALAMT>-1234.56<DTASOF>20251130120000[0:GMT]</LEDGERBAL><AVAILBAL><BALAMT>9999.99DTASOF>20251130120000[0:GMT]</AVAILBAL></CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1></OFX>"#;
+
     #[test]
     fn test_parse_smgl_as_smgl() {
         let res = parse_as_sgml(&V1_SMGL_DATA.to_string());
@@ -364,6 +392,17 @@ NEWFILEUID:NONE
         assert_eq!(second_res.memo, r#"Preauthorized Debit"#);
         assert_eq!(second_res.transaction_amount, r#"-1.00"#);
         assert_eq!(second_res.refnum, r#"2"#);
+    }
+    #[test]
+    fn test_parse_one_line_sgml() {
+        let res = parse_as_sgml_on_one_line(&ONE_LINE_TEST_DATA.to_string());
+        let unwrapped = res.unwrap();
+        let first_res = &unwrapped
+            .get(0)
+            .expect("First value is none. This is wrong.");
+        assert_eq!(first_res.name, r#"Test Transaction"#);
+        assert_eq!(first_res.transaction_amount, r#"-0.92"#);
+        assert_eq!(first_res.refnum, r#"test-123"#);
     }
     #[test]
     fn test_parse_smgl_as_xml() {
@@ -404,7 +443,7 @@ NEWFILEUID:NONE
 
     #[test]
     fn test_parse_ofx_with_smgl() {
-        let result = parse_ofx_with_fallback(&V1_SMGL_DATA);
+        let result = parse_ofx_with_fallback(&V1_SMGL_DATA, "dummy_file");
 
         assert_eq!(result.len(), 2);
         let first_res = &result.get(0).expect("First value is none. This is wrong.");
@@ -419,7 +458,7 @@ NEWFILEUID:NONE
 
     #[test]
     fn test_parse_ofx_with_xml() {
-        let result = parse_ofx_with_fallback(&V2_XML_DATA);
+        let result = parse_ofx_with_fallback(&V2_XML_DATA, "dummy_file");
 
         assert_eq!(result.len(), 2);
         let first_res = &result.get(0).expect("First value is none. This is wrong.");

@@ -49,6 +49,9 @@ impl TransactionBatch {
 const HASH_PATH: &str = "./config/existing-hashes.txt";
 const AMEX_INSITUTION_ID: i32 = 1;
 const CITIZENS_INSTITUTION_ID: i32 = 2;
+const CAPITAL_ONE_INSITUTION_ID: i32 = 3;
+const APPLE_INSITUTION_ID: i32 = 4;
+const CHASE_INSTITUTION_ID: i32 = 5;
 
 pub fn ingestinator() -> Result<Vec<TransactionBatchHolder>, Box<dyn std::error::Error>> {
     // Load configuration
@@ -62,6 +65,9 @@ pub fn ingestinator() -> Result<Vec<TransactionBatchHolder>, Box<dyn std::error:
         let institution_id = match dir.name.as_str() {
             "amex" => AMEX_INSITUTION_ID,
             "citizens" => CITIZENS_INSTITUTION_ID,
+            "capitalone" => CAPITAL_ONE_INSITUTION_ID,
+            "apple" => APPLE_INSITUTION_ID,
+            "chase" => CHASE_INSTITUTION_ID,
             _ => 0,
         };
         let processing_result_batch = process_directory(&dir.path, &mut existing_hashes).unwrap();
@@ -102,9 +108,10 @@ fn process_directory(
             .to_str()
             .expect("Invalid file path")
             .to_string();
-        let file_content = fs::read_to_string(file_path)?;
+        let file_name = &file_path.as_str();
+        let file_content = fs::read_to_string(&file_path)?;
 
-        let txns = parse_ofx_with_fallback(file_content.as_str());
+        let txns = parse_ofx_with_fallback(file_content.as_str(), file_name);
         let mut new_hashes: HashSet<String> = HashSet::new();
         let mut batch: TransactionBatch = TransactionBatch::new();
         // if we got this far, the parsing worked.
